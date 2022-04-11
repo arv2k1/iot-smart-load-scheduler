@@ -73,12 +73,12 @@ String getMeterReadingAsJsonString(MeterReading meterReading)
 {
 	return 
 	"{" +
-		"\"voltage\":"   + meterReading.voltage     +
-		"\"current\":"   + meterReading.current     +
-		"\"frequency\":" + meterReading.frequency   +
-		"\"pf\":"        + meterReading.powerFactor +
-		"\"power\":"     + meterReading.power       +
-		"\"energy\":"    + meterReading.energy      +
+		"\"voltage\":"   + meterReading.voltage     + "," +
+		"\"current\":"   + meterReading.current     + "," +
+		"\"frequency\":" + meterReading.frequency   + "," +
+		"\"pf\":"        + meterReading.powerFactor + "," +
+		"\"power\":"     + meterReading.power       + "," +
+		"\"energy\":"    + meterReading.energy      + "," +
 	"}";
 }
 
@@ -128,8 +128,8 @@ void loop()
 
 	String requestPayload = 
 	"{" +
-		"\"regular_meter_reading\""   + regularMeterReadingJson   +
-		"\"scheduled_meter_reading\"" + scheduledMeterReadingJson +
+		"\"regular_meter_reading\""   + regularMeterReadingJson   + "," +
+		"\"scheduled_meter_reading\"" + scheduledMeterReadingJson + "," +
 	"}";
 
 	// === Make request ===
