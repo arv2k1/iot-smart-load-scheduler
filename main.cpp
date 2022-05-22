@@ -10,13 +10,16 @@
 #define LED 2
 #define RELAY_ONE 25
 #define RELAY_TWO 27
-#define DIP 26
 
 #define RX1 14
 #define TX1 12
 
 #define RX2 16
 #define TX2 17
+
+#define LOG_DEBUG 0
+#define LOG_INFO 1
+#define LOG_ERROR 2
 
 String ESP_ID = "1";
 
@@ -31,9 +34,10 @@ String PROPERTIES_JSON_URL = "https://raw.githubusercontent.com/arv2k1/sls-prope
 
 String domain;
 int intervalBetweenRequests = 5000;
+int logLevel = 1;
 
 // ====== MODELS ======
-struct MeterReading
+typedef struct
 {
   float voltage;
   float current;
@@ -41,7 +45,7 @@ struct MeterReading
   float powerFactor;
   float power;
   float energy;
-};
+} MeterReading ;
 
 // ====== UTIL METHODS ======
 void blinkLed(int count)
@@ -55,20 +59,9 @@ void blinkLed(int count)
   }
 }
 
-void connectToWifi()
+void log(int level, String msg)
 {
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    blinkLed(6);
-    delay(1000);
-  }
-  log("Wifi connected");
-}
-
-void log(String msg)
-{
-  if (domain && msg) {
+  if (domain && msg && level >= logLevel) {
     HTTPClient http;
     http.begin(domain + "/log");
     http.addHeader("Content-Type", "text/plain");
@@ -77,6 +70,19 @@ void log(String msg)
   }
 }
 
+void connectToWifi()
+{
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    blinkLed(6);
+    delay(1000);
+  }
+  delay(5000);
+  log(LOG_INFO, "Wifi connected");
+}
+
+
 // ====== SERVICE METHODS ======
 void getPropertiesAndSetAsGlobalVariable()
 {
@@ -84,7 +90,7 @@ void getPropertiesAndSetAsGlobalVariable()
   HTTPClient http;
   http.begin(PROPERTIES_JSON_URL);
   int responseStatusCode = http.GET();
-  log("Properties fetch response code = " + String(responseStatusCode));
+  log(LOG_DEBUG, "Properties fetch response code = " + String(responseStatusCode));
   if (responseStatusCode <= 0)
   {
     delay(10000);
@@ -95,7 +101,7 @@ void getPropertiesAndSetAsGlobalVariable()
 
   String propertiesJsonStr = http.getString();
   http.end();
-  log(propertiesJsonStr);
+  log(LOG_DEBUG, propertiesJsonStr);
 
   // === Parse properties json str as a json doc ===
   DynamicJsonDocument propertiesJson(300);
@@ -104,21 +110,24 @@ void getPropertiesAndSetAsGlobalVariable()
   // === Set as global variables ===
   const char *d = propertiesJson["domain"];
   domain = String(d);
-  log("domain set => " + domain);
+  log(LOG_INFO, "domain set => " + domain);
 
   const char *delayInterval = propertiesJson["post_meter_readings_interval"];
   int di = String(delayInterval).toInt();
   intervalBetweenRequests = di >= 100 ? di : 5000;
-  log("Request delay interval set => " + String(intervalBetweenRequests));
+  log(LOG_INFO, "Request delay interval set => " + String(intervalBetweenRequests));
 }
 
 void setRelayState(int loadNumber, int state)
 {
   if (loadNumber < 1 || loadNumber > 2 || state < 0 || state > 1)
+  {
+    log(LOG_ERROR, "Invalid load number or state, aborting setRelayState, Loadnumber => " + String(loadNumber) + ", state => " + String(state));
     return;
+  }
   int relayPin = loadNumber == 1 ? RELAY_ONE : RELAY_TWO;
   digitalWrite(relayPin, state);
-  log("Pin " + relayPin + " set to => " + state);
+  log(LOG_DEBUG, "Pin " + String(relayPin) + " set to => " + String(state));
 }
 
 void getRelayStatusAndSetState()
@@ -127,35 +136,29 @@ void getRelayStatusAndSetState()
   HTTPClient http;
   http.begin(domain + "/" + ESP_ID + "/relay-status");
   int responseStatusCode = http.GET();
-  log("Relay status fetch response code = " + String(responseStatusCode));
+  log(LOG_DEBUG, "Relay status fetch response code = " + String(responseStatusCode));
   if (responseStatusCode <= 0)
     return;
   String relayStatusJsonStr = http.getString();
   http.end();
-  log(relayStatusJsonStr);
+  log(LOG_DEBUG, relayStatusJsonStr);
 
   // === Parse json ===
   DynamicJsonDocument relayStatusJson(300);
   deserializeJson(relayStatusJson, relayStatusJsonStr);
 
   // === Set relay state ===
-  for(int i=0; i<2; i++) {
-    setRelayState(i, relayStatusJson["relay-status"][i]);
+  for(int i=1; i<=2; i++) {
+    int curRelayState = relayStatusJson["relay-status"][i-1];
+    log(LOG_DEBUG, "Setting relay state for load => " + String(i) + ", state => " + String(curRelayState));
+    setRelayState(i, curRelayState);
   }
-}
-
-void readMeterReading(PZEM004Tv30 pzem, MeterReading meterReading)
-{
-  meterReading.voltage = pzem.voltage();
-  meterReading.current = pzem.current();
-  meterReading.frequency = pzem.frequency();
-  meterReading.powerFactor = pzem.pf();
-  meterReading.power = pzem.power();
-  meterReading.energy = pzem.energy();
 }
 
 bool isValidReading(MeterReading meterReading)
 {
+  log(LOG_INFO, "Inside validate method");
+  log(LOG_INFO, String(meterReading.voltage));
   return
     !isnan(meterReading.voltage)     && 
     !isnan(meterReading.current)     && 
@@ -178,19 +181,50 @@ void setMeterReadingsInJson(String meterType, MeterReading mr, DynamicJsonDocume
 void readAndSendMeterReadings()
 {
   // === Read meter readings and construct json
-  MeterReading regularMeterReading;
-  MeterReading scheduledMeterReading;
+  MeterReading regularMeterReading = {
+    pzemRegular.voltage(),
+    pzemRegular.current(),
+    pzemRegular.frequency(),
+    pzemRegular.pf(),
+    pzemRegular.power(),
+    pzemRegular.energy()
+  };
 
-  readMeterReading(pzemRegular, regularMeterReading);
-  readMeterReading(pzemScheduled, scheduledMeterReading);
+  MeterReading scheduledMeterReading = {
+    pzemScheduled.voltage(),
+    pzemScheduled.current(),
+    pzemScheduled.frequency(),
+    pzemScheduled.pf(),
+    pzemScheduled.power(),
+    pzemScheduled.energy()
+  };
+
+  if(!isValidReading(regularMeterReading) || !isValidReading(scheduledMeterReading))
+  {
+    log(LOG_INFO, "Invalid meter reading, aborting POST");
+    return;
+  }
 
   DynamicJsonDocument meterReadingsJson(1000);
-  setMeterReadingsInJson("regular_meter", regularMeterReading, meterReadingsJson);
-  setMeterReadingsInJson("scheduled_meter", scheduledMeterReading, meterReadingsJson);
+
+  meterReadingsJson["regular_meter"]["voltage"] = regularMeterReading.voltage;
+  meterReadingsJson["regular_meter"]["current"] = regularMeterReading.current;
+  meterReadingsJson["regular_meter"]["frequency"] = regularMeterReading.frequency;
+  meterReadingsJson["regular_meter"]["pf"] = regularMeterReading.powerFactor;
+  meterReadingsJson["regular_meter"]["power"] = regularMeterReading.power;
+  meterReadingsJson["regular_meter"]["energy"] = regularMeterReading.energy;
+
+  meterReadingsJson["scheduled_meter"]["voltage"] = scheduledMeterReading.voltage;
+  meterReadingsJson["scheduled_meter"]["current"] = scheduledMeterReading.current;
+  meterReadingsJson["scheduled_meter"]["frequency"] = scheduledMeterReading.frequency;
+  meterReadingsJson["scheduled_meter"]["pf"] = scheduledMeterReading.powerFactor;
+  meterReadingsJson["scheduled_meter"]["power"] = scheduledMeterReading.power;
+  meterReadingsJson["scheduled_meter"]["energy"] = scheduledMeterReading.energy;
 
   String meterReadingsJsonStr;
   serializeJson(meterReadingsJson, meterReadingsJsonStr);
-  log(meterReadingsJsonStr);
+  log(LOG_INFO, "Serialized json to str");
+  log(LOG_INFO, meterReadingsJsonStr);
 
   // === Post to server ===
   HTTPClient http;
@@ -205,7 +239,6 @@ void setup() {
   pinMode(LED, OUTPUT);
   pinMode(RELAY_ONE, OUTPUT);
   pinMode(RELAY_TWO, OUTPUT);
-  pinMode(DIP, INPUT);
 
   Serial.begin(115200);
 
@@ -219,7 +252,7 @@ void setup() {
 
 void loop() {
 
-  log("Looping...");
+  log(LOG_INFO, "Looping...");
 
   getRelayStatusAndSetState();
   
