@@ -26,8 +26,8 @@ String ESP_ID = "1";
 PZEM004Tv30 pzemRegular(Serial1, RX1, TX1);
 PZEM004Tv30 pzemScheduled(Serial2, RX2, TX2);
 
-const char *ssid = "ASUS_X00TD";
-const char *password = "9487774825@Hs";
+const char *ssid = "";
+const char *password = "";
 
 String PROPERTIES_JSON_URL = "https://raw.githubusercontent.com/arv2k1/sls-properties/main/sls.json";
 
